@@ -1,18 +1,59 @@
 # pyramco
-# version 0.9.1
+# version 0.9.2
 
 # a complete wrapper class for RAMCO API calls
-# requires Python 3.6+ and the 'requests' module
-# set your RAMCO api key in a separate file 'config.py' as 'ramco_api_key'
 # documentation on the RAMCO API at: https://api.ramcoams.com/api/v2/ramco_api_v2_doc.pdf
+# set your RAMCO api key in a separate file 'config.py' as 'ramco_api_key'
+# requires Python 3.6+ and the 'requests' module
 
 # imports
-import json
 import requests
 import config
 
 # the base RAMCO API url is always the same
 ramco_api_url = 'https://api.ramcoams.com/api/v2/'
+
+
+## response code/error handling
+
+# definitions
+code_200 = {'DescriptionShort':'OK', 'DescriptionVerbose':'The request was successfully processed and data is included in the response'}
+code_204 = {'DescriptionShort':'OK: No Data','DescriptionVerbose':'The request was successfully processed but no data is included in the response. This is typical of UpdateEntity requests.'}
+code_206 = {'DescriptionShort':'OK: Partial Data','DescriptionVerbose':'The request was successfully processed and partial data is included in the response. This is the expected response when the dataset that Ramco needs to return to the user is too large. A StreamToken will be returned to allow the user to fetch the remaining data.'}
+code_400 = {'DescriptionShort':'Bad Request','DescriptionVerbose':'The request was not understood. See the response text for more information.'}
+code_401 = {'DescriptionShort':'Unauthorized','DescriptionVerbose':'The request was understood but it will not be fulfilled due to a lack of user permissions. See the response text for more information.'}
+code_404 = {'DescriptionShort':'Not Found','DescriptionVerbose':'The request is understood but no matching data is found to return.'}
+code_422 = {'DescriptionShort':'Invalid User','DescriptionVerbose':'No user with provided username/password combination. This error is specific to the AuthenticateUser request.'}
+code_500 = {'DescriptionShort':'Server Error','DescriptionVerbose':'Something is not working correctly server-side. This is not an issue that can be resolved by modifying query syntax.'}
+code_unknown = {'ResponseCode':999,'DescriptionShort':'Unknown Internal/pyramco Error','DescriptionVerbose':'No code or response returned from RAMCO. Verify you are on Python version 3.6+. Check your connections and settings. This error originates in your code or pyramco itself.'}
+
+
+# handler function - adds additional context to errors and consolidates streamtoken requests into single reply
+# ALL pyramco responses will contain a 'ResponseCode' property as above, even if no connection is made
+def handler(reply):
+	if reply['ResponseCode'] == 200 or reply['ResponseCode'] == 206: # returns results as a single object with code 200 if no streamtoken was needed and code 206 if it was - fetches all streamtoken pages and combines them
+		combined_reply = []
+		combined_reply.append(reply)
+		while 'StreamToken' in reply:
+			reply = resume_streamtoken(reply['StreamToken'])
+			combined_reply.append(reply['Data'])
+		return(combined_reply)
+	elif reply['ResponseCode'] == 204: # returns unmodified results
+		return(reply)
+	elif reply['ResponseCode'] == 400: # returns results plus additional error text from documentation
+		reply = {**reply, **code_400}
+		return(reply)
+	elif reply['ResponseCode'] == 404: # returns results plus additional error text from documentation
+		reply = {**reply, **code_404}
+		return(reply)
+	elif reply['ResponseCode'] == 422: # returns results plus additional error text from documentation
+		reply = {**reply, **code_422}
+		return(reply)
+	elif reply['ResponseCode'] == 500: # returns results plus additional error text from documentation
+		reply = {**reply, **code_500}
+		return(reply)
+	else: # returns the text for other/unknown errors
+		return(code_unknown)
 
 
 # pyramco wrapper operations
@@ -27,7 +68,7 @@ def get_entity_types():
 		'key': config.ramco_api_key,
 		'Operation':'GetEntityTypes'
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### get_entity_metadata
@@ -39,7 +80,7 @@ def get_entity_metadata(entity):
 		'Operation':'GetEntityMetadata',
 		'Entity': entity
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### get_option_set
@@ -51,7 +92,7 @@ def get_option_set(entity, attribute):
 		'Entity': entity,
 		'Attribute': attribute
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### clear_cache
@@ -62,7 +103,7 @@ def clear_cache():
 		'key': config.ramco_api_key,
 		'Operation':'ClearCache'
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 
@@ -78,7 +119,7 @@ def get_entity(entity, guid, *attributes):
 		'GUID': guid,
 		'Attributes': attributes
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### get_entities
@@ -93,7 +134,7 @@ def get_entities(entity, *attributes, filters='', string_delimiter='', max_resul
 		'StringDelimiter': string_delimiter,
 		'MaxResults': max_results
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### resume_streamtoken
@@ -104,7 +145,7 @@ def resume_streamtoken(streamtoken):
 		'Operation':'GetEntities',
 		'StreamToken': streamtoken
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### validate_user
@@ -116,7 +157,7 @@ def validate_user(username, password):
 		'cobalt_username ': username,
 		'cobalt_password': password
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 
@@ -134,7 +175,7 @@ def update_entity(entity, guid, *attributes, string_delimiter=''):
 		'AttributeValues': attributes,
 		'StringDelimiter': string_delimiter
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### create_entity
@@ -147,7 +188,7 @@ def create_entity(entity, *attributes, string_delimiter=''):
 		'AttributeValues': attributes,
 		'StringDelimiter': string_delimiter
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 ### delete_entity
@@ -159,49 +200,7 @@ def delete_entity(entity, guid):
 		'Entity': entity,
 		'GUID': guid
 		}
-	reply = requests.post(ramco_api_url,payload).json()
+	reply = handler(requests.post(ramco_api_url,payload).json())
 	return(reply)
 
 # end pyramco wrapper operations
-
-
-## code/error handling section (DRAFT)
-
-# definitions
-
-code_200 = {'description_short':'OK', 'description_verbose':'The request was successfully processed and data is included in the response'}
-code_204 = {'description_short':'OK: No Data','description_verbose':'The request was successfully processed but no data is included in the response. This is typical of UpdateEntity requests.'}
-code_206 = {'description_short':'OK: Partial Data','description_verbose':'The request was successfully processed and partial data is included in the response. This is the expected response when the dataset that Ramco needs to return to the user is too large. A StreamToken will be returned to allow the user to fetch the remaining data.'}
-code_400 = {'description_short':'Bad Request','description_verbose':'The request was not understood. See the response text for more information.'}
-code_401 = {'description_short':'Unauthorized','description_verbose':'The request was understood but it will not be fulfilled due to a lack of user permissions. See the response text for more information.'}
-code_404 = {'description_short':'Not Found','description_verbose':'The request is understood but no matching data is found to return.'}
-code_422 = {'description_short':'Invalid User','description_verbose':'No user with provided username/password combination. This error is specific to the AuthenticateUser request.'}
-code_500 = {'description_short':'Server Error','description_verbose':'Something is not working correctly server-side. This is not an issue that can be resolved by modifying query syntax.'}
-code_unknown = {'ResponseCode':999,'description_short':'Unknown Internal/pyramco Error','description_verbose':'No code or response returned from RAMCO. Verify you are on Python version 3.6+. Check your connections and settings. This error originates in your code or pyramco itself.'}
-
-# function
-
-def handler(reply):
-	if reply['ResponseCode'] == 200: # returns unmodified results
-		return(reply)
-
-	elif reply['ResponseCode'] == 204: # returns unmodified results
-		return(reply)
-
-	#elif reply['ResponseCode'] == 206: # iterates through all paged results via streamtoken and returns them combined
-		#return(reply)
-
-	elif reply['ResponseCode'] == 400: # returns results plus additional error text from documentation
-		return(reply)
-
-	elif reply['ResponseCode'] == 404: # returns results plus additional error text from documentation
-		return(reply)
-
-	elif reply['ResponseCode'] == 422: # returns results plus additional error text from documentation
-		return(reply)
-
-	elif reply['ResponseCode'] == 500: # returns results plus additional error text from documentation
-		return(reply)
-
-	else: # returns the text for other/unknown errors
-		return(code_unknown)
